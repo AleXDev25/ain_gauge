@@ -1,4 +1,4 @@
-// All in one gauge for car and other viechels
+// All in one gauge for car and other vehicles
 //
 // Version 0.1
 //
