@@ -1,6 +1,6 @@
 // All in one gauge for car and other vehicles
 //
-// Version 0.1
+// Version 0.2
 //
 // By Alexander B.
 // 2017
@@ -21,13 +21,15 @@ U8GLIB_SSD1306_128X64 u8g(U8G_I2C_OPT_NONE|U8G_I2C_OPT_DEV_0);  // I2C / TWI
 
 #define KEY 5
 #define PIN_DS 9
-#define PIN_LED_BUSY 
+//#define PIN_LED_BUSY 
 #define DS3231_I2C_ADDRESS 0x68
 #define SD_CS_PIN 10
 
 #define latchPin 8
 #define clockPin 7
 #define dataPin 6
+
+//#define oilSens
 
 #define jp1 14
 #define jp2 15
@@ -62,43 +64,42 @@ static unsigned char logo_altezza_bits[] U8G_PROGMEM = {
   0xFF, 0xFD, 0x03, 0xFE, 0x3F, 0x80, 0xDF, 0xFF, 0x1F, 0xFC, 0x81, 0xFF, 
   0x9F, 0xFF, 0x7F, 0xFE, 0xFF, 0xFD, 0x01, 0xFC, };
 
-//----------------------Обьекты-----------------------
+//----------------------Objects-----------------------
 
 Bounce sw = Bounce();
 OneWire  ds(PIN_DS);
 Adafruit_BMP085 bmp;
 
-//----------------------Переменные-----------------------
+//----------------------Var-----------------------
 
-bool bmp_error,sd_error;
-uint8_t page = 0;
-float engine_temp,ext_temp,int_temp,pressure = 0;
+bool bmp_error,sd_error,serial_enable;
+uint8_t page,serial_cmd = 0;
+float engine_temp,oil_temp,ext_temp,int_temp,pressure,egt = 0;
 
-byte data1;
-byte data2;
-byte dataArray1[8];
-byte dataArray2[8];
+uint8_t DISP_CONFIG[12]={0,1,2,3,4,5,6,7,8,9,10,11}; // 0-Volt 1-water temp 2-oil temp 3-in.temp 4-ext.temp 5-atm press 6-oil press 7-SPEED 8-RPM 9-DATE 10-AFR 11-EGT
+uint8_t LED_CONFIG[2]={0,1}; // 0-AFR 1-RPM
 
-int DISP_CONFIG[11]={0,1,2,3,4,5,6,7,8,9,10}; // 0-Volt 1-water 2-oil 3-in.temp 4-ext.temp 5-press 6-RPM 7-SPEED 8-DATE 9-AFR
-
-//---------------------Многозадачность------------------------
+//---------------------Multitask------------------------
 
 unsigned long SENS_prevMillis = 0; 
 const long SENS_interval = 3000;
 unsigned long ENG_SENS_prevMillis = 0; 
 const long ENG_SENS_interval = 200;
 unsigned long SD_prevMillis = 0; 
-const long SD_interval = 2000;
+const long SD_interval[3] = {1000,2000,5000};
 
 //---------------------Sensor ardess------------------------
 
 byte engine[8] = {0x28,0xFF,0x8F,0xDA,0xA4,0x15,0x03,0x6F};
 byte external[8] = {0x28,0xFF,0x53,0x81,0xA4,0x15,0x03,0x5C};
+//byte oil[] = {0x,0x,0x,0x,0x,0x,0x,0x};
 
-//---------------------------------------------
+//---------------------MAF Function fo float------------------------
 float mapf(float x, float in_min, float in_max, float out_min, float out_max){
   return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
 }
+
+//---------------------Read analog sensor functions------------------------
 
 float readVolt(){
   float v = 0.0;
@@ -156,7 +157,7 @@ String getTime(){
 
 //-------------------DISPLAY FUNC.--------------------------
 
-void water_temp(uint8_t x, uint8_t y){
+void WATER_TEMP(uint8_t x, uint8_t y){
   u8g.setFont(u8g_font_6x13);
   u8g.setPrintPos(x,y);
   u8g.println("WATER TEMP");
@@ -164,15 +165,15 @@ void water_temp(uint8_t x, uint8_t y){
   u8g.println(engine_temp,1);
 }
 
-void oil_temp(uint8_t x, uint8_t y){
+void OIL_TEMP(uint8_t x, uint8_t y){
   u8g.setFont(u8g_font_6x13);
   u8g.setPrintPos(x,y);
   u8g.println("OIL TEMP");
   u8g.setPrintPos(x+64,y);
-  u8g.println(75.23,1);
+  u8g.println(oil_temp,1);
 }
 
-void in_temp(uint8_t x, uint8_t y){
+void IN_TEMP(uint8_t x, uint8_t y){
   u8g.setFont(u8g_font_6x13);
   u8g.setPrintPos(x,y);
   u8g.println("IN.TEMP");
@@ -180,7 +181,7 @@ void in_temp(uint8_t x, uint8_t y){
   u8g.println(int_temp,1);
 }
 
-void ex_temp(uint8_t x, uint8_t y){
+void EX_TEMP(uint8_t x, uint8_t y){
   u8g.setFont(u8g_font_6x13);
   u8g.setPrintPos(x,y);
   u8g.println("EXT.TEMP");
@@ -188,7 +189,7 @@ void ex_temp(uint8_t x, uint8_t y){
   u8g.println(ext_temp,1);  
 }
 
-void atm_pressure(uint8_t x, uint8_t y){
+void ATM_PRESSURE(uint8_t x, uint8_t y){
   u8g.setFont(u8g_font_6x13);
   u8g.setPrintPos(x,y);
   u8g.println("ATM.PRESS");
@@ -196,7 +197,7 @@ void atm_pressure(uint8_t x, uint8_t y){
   u8g.println(pressure,1);
 }
 
-void oil_pressure(uint8_t x, uint8_t y){
+void OIL_PRESSURE(uint8_t x, uint8_t y){
   u8g.setFont(u8g_font_6x13);
   u8g.setPrintPos(x,y);
   u8g.println("OIL PRESS");
@@ -204,7 +205,7 @@ void oil_pressure(uint8_t x, uint8_t y){
   u8g.println(8.0,1);
 }
 
-void rpm(uint8_t x, uint8_t y){
+void RPM(uint8_t x, uint8_t y){
   u8g.setFont(u8g_font_6x13);
   u8g.setPrintPos(x,y);
   u8g.println("RPM");
@@ -212,7 +213,7 @@ void rpm(uint8_t x, uint8_t y){
   u8g.println(658);
 }
 
-void spd(uint8_t x, uint8_t y){
+void SPD(uint8_t x, uint8_t y){
   u8g.setFont(u8g_font_6x13);
   u8g.setPrintPos(x,y);
   u8g.println("SPEED");
@@ -220,7 +221,7 @@ void spd(uint8_t x, uint8_t y){
   u8g.println(37);
 }
 
-void date(uint8_t x, uint8_t y){
+void rtc_date(uint8_t x, uint8_t y){
   u8g.setFont(u8g_font_6x13);
   u8g.setPrintPos(x,y);
   u8g.println("DATE");
@@ -228,7 +229,7 @@ void date(uint8_t x, uint8_t y){
   u8g.println(getTime());
 }
 
-void afr(uint8_t x, uint8_t y){
+void AFR(uint8_t x, uint8_t y){
   u8g.setFont(u8g_font_6x13);
   u8g.setPrintPos(x,y);
   u8g.println("AFR");
@@ -236,12 +237,20 @@ void afr(uint8_t x, uint8_t y){
   u8g.println(readLambda(),1);
 }
 
-void volt(uint8_t x, uint8_t y){
+void VOLT(uint8_t x, uint8_t y){
   u8g.setFont(u8g_font_6x13);
   u8g.setPrintPos(x,y);
   u8g.println("VOLT");
   u8g.setPrintPos(x+25,y);
   u8g.println(readVolt(),1);
+}
+
+void EGT(uint8_t x, uint8_t y){
+  u8g.setFont(u8g_font_6x13);
+  u8g.setPrintPos(x,y);
+  u8g.println("EGT");
+  u8g.setPrintPos(x+25,y);
+  u8g.println(egt,1);
 }
 
 //-------------------DISPLAY CASE--------------------------
@@ -252,37 +261,40 @@ void case_upper(uint8_t disp_conf){ // case for 128x0-32
 
   switch (disp_conf){
     case 0:
-    volt(x,y);
+    VOLT(x,y);
     break;
     case 1:
-    water_temp(x,y);
+    WATER_TEMP(x,y);
     break;
     case 2:
-    oil_temp(x,y);
+    OIL_TEMP(x,y);
     break;
     case 3:
-    in_temp(x,y);
+    IN_TEMP(x,y);
     break;
     case 4:
-    ex_temp(x,y);
+    EX_TEMP(x,y);
     break;
     case 5:
-    atm_pressure(x,y);
+    ATM_PRESSURE(x,y);
     break;
     case 6:
-    oil_pressure(x,y);
+    OIL_PRESSURE(x,y);
     break;
     case 7:
-    spd(x,y);
+    SPD(x,y);
     break;
     case 8:
-    rpm(x,y);
+    RPM(x,y);
     break;
     case 9:
-    date(x,y);
+    rtc_date(x,y);
     break;
     case 10:
-    afr(x,y);
+    AFR(x,y);
+    break;
+    case 11:
+    EGT(x,y);
     break;
   }
 }
@@ -293,37 +305,40 @@ void case_bottom(uint8_t disp_conf){ // case for 128x32-64
 
   switch (disp_conf){
     case 0:
-    volt(x,y);
+    VOLT(x,y);
     break;
     case 1:
-    water_temp(x,y);
+    WATER_TEMP(x,y);
     break;
     case 2:
-    oil_temp(x,y);
+    OIL_TEMP(x,y);
     break;
     case 3:
-    in_temp(x,y);
+    IN_TEMP(x,y);
     break;
     case 4:
-    ex_temp(x,y);
+    EX_TEMP(x,y);
     break;
     case 5:
-    atm_pressure(x,y);
+    ATM_PRESSURE(x,y);
     break;
     case 6:
-    oil_pressure(x,y);
+    OIL_PRESSURE(x,y);
     break;
     case 7:
-    spd(x,y);
+    SPD(x,y);
     break;
     case 8:
-    rpm(x,y);
+    RPM(x,y);
     break;
     case 9:
-    date(x,y);
+    rtc_date(x,y);
     break;
     case 10:
-    afr(x,y);
+    AFR(x,y);
+    break;
+    case 11:
+    EGT(x,y);
     break;
   }
 }
@@ -347,112 +362,90 @@ float GetTemp(byte *sensor){
   return temp;
 }
 
-//---------------------------------------------
-
-void shiftOut(int myDataPin, int myClockPin, byte myDataOut) {
-
-  int i=0;
-  int pinState;
-  pinMode(myClockPin, OUTPUT);
-  pinMode(myDataPin, OUTPUT);
-
-  digitalWrite(myDataPin, 0);
-  digitalWrite(myClockPin, 0);
-
-  for (i=7; i>=0; i--)  {
-    digitalWrite(myClockPin, 0);
-
-    if ( myDataOut & (1<<i) ) {
-      pinState= 1;
-    }
-    else {  
-      pinState= 0;
-    }
-
-    digitalWrite(myDataPin, pinState);
-    digitalWrite(myClockPin, 1);
-    digitalWrite(myDataPin, 0);
-  }
-  digitalWrite(myClockPin, 0);
-}
+//------------------LED CONTROL---------------------------
 
 void blinkAll(int n, int d) {
   digitalWrite(latchPin, 0);
-  shiftOut(dataPin, clockPin, 0);
-  shiftOut(dataPin, clockPin, 0);
+  shiftOut(dataPin, clockPin, MSBFIRST, 0);
+  shiftOut(dataPin, clockPin, MSBFIRST, 0);
   digitalWrite(latchPin, 1);
-  delay(200);
+  delay(100);
   for (int x = 0; x < n; x++) {
     digitalWrite(latchPin, 0);
-    shiftOut(dataPin, clockPin, 255);
-    shiftOut(dataPin, clockPin, 255);
+    shiftOut(dataPin, clockPin, MSBFIRST, 255);
+    shiftOut(dataPin, clockPin, MSBFIRST, 255);
     digitalWrite(latchPin, 1);
     delay(d);
     digitalWrite(latchPin, 0);
-    shiftOut(dataPin, clockPin, 0);
-    shiftOut(dataPin, clockPin, 0);
+    shiftOut(dataPin, clockPin, MSBFIRST, 0);
+    shiftOut(dataPin, clockPin, MSBFIRST, 0);
     digitalWrite(latchPin, 1);
     delay(d);
   }
 }
-
+  
 void testLed(uint8_t d) {
-  dataArray1[0] = 0x01; //00000001
-  dataArray1[1] = 0x02; //00000010
-  dataArray1[2] = 0x04; //00000100
-  dataArray1[3] = 0x08; //00001000
-  dataArray1[4] = 0x10; //00010000
-  dataArray1[5] = 0x20; //00100000
-  dataArray1[6] = 0x40; //01000000
-  dataArray1[7] = 0x80; //10000000
+  uint16_t data = 0;
 
-  dataArray2[0] = 0x01; //00000001
-  dataArray2[1] = 0x02; //00000010
-  dataArray2[2] = 0x04; //00000100
-  dataArray2[3] = 0x08; //00001000
-  dataArray2[4] = 0x10; //00010000
-  dataArray2[5] = 0x20; //00100000
-  dataArray2[6] = 0x40; //01000000
-  dataArray2[7] = 0x80; //10000000
-
-  for (int j = 0; j < 8; j++) {
-    data1 = dataArray1[j];
-    digitalWrite(latchPin, 0);    
-    shiftOut(dataPin, clockPin, 0);   
-    shiftOut(dataPin, clockPin, data1);
+  data = 1;
+  for(byte i=0; i<15; i++){
+    data=data << 1;
+    digitalWrite(latchPin, 0);
+    shiftOut(dataPin, clockPin, MSBFIRST, (data >> 8));
+    shiftOut(dataPin, clockPin, MSBFIRST, data);
     digitalWrite(latchPin, 1);
     delay(d);
   }
-  for (int j = 0; j < 8; j++) {
-    data2 = dataArray2[j];    
-    digitalWrite(latchPin, 0);    
-    shiftOut(dataPin, clockPin, data2);
-    shiftOut(dataPin, clockPin, 0);
+    for(byte i=0; i<15; i++){
+    data=data >> 1;
+    digitalWrite(latchPin, 0);
+    shiftOut(dataPin, clockPin, MSBFIRST, (data >> 8));
+    shiftOut(dataPin, clockPin, MSBFIRST, data);
     digitalWrite(latchPin, 1);
     delay(d);
   }
-  for (int j = 7; j >= 0; j--) {
-    data2 = dataArray2[j];    
-    digitalWrite(latchPin, 0);    
-    shiftOut(dataPin, clockPin, data2);
-    shiftOut(dataPin, clockPin, 0);
-    digitalWrite(latchPin, 1);
-    delay(d);
-  }
-  for (int j = 7; j >= 0; j--) {
-    data1 = dataArray1[j];
-    digitalWrite(latchPin, 0);    
-    shiftOut(dataPin, clockPin, 0);   
-    shiftOut(dataPin, clockPin, data1);
-    digitalWrite(latchPin, 1);
-    delay(d);
-  }  
 }
 
-//---------------------------------------------
+void bar_led(int in_data, int max_data){
+  uint8_t cur_data = map(in_data,0,max_data,0,16);
+  uint16_t data = 0;
+
+  if(cur_data>0 && cur_data<2) data = 1;
+  if(cur_data>1 && cur_data<=16){
+    data = 1;
+    for(byte i=0; i<cur_data-1; i++){
+      data=(data << 1) + 1;
+    }
+  } 
+  
+  digitalWrite(latchPin, 0);
+  shiftOut(dataPin, clockPin, MSBFIRST, (data >> 8));
+  shiftOut(dataPin, clockPin, MSBFIRST, data);
+  digitalWrite(latchPin, 1);
+}
+
+void dot_led(int in_data, int max_data){
+  uint8_t cur_data = map(in_data,0,max_data,0,16);  
+  uint16_t data = 0;
+
+  if(cur_data>0 && cur_data<2) data = 1;
+  if(cur_data>1 && cur_data<=16){
+    data = 1;
+    for(byte i=0; i<cur_data-1; i++){
+      data=data << 1;
+    }
+  } 
+  
+  digitalWrite(latchPin, 0);
+  shiftOut(dataPin, clockPin, MSBFIRST, (data >> 8));
+  shiftOut(dataPin, clockPin, MSBFIRST, data);
+  digitalWrite(latchPin, 1);
+}
+
+//-------------------SETUP--------------------------
 
 void setup(){
-  //Serial.begin(9600);   //for debugging
+  Serial.begin(9600);
   u8g.setRot180();
   
   pinMode(latchPin, OUTPUT);
@@ -477,15 +470,13 @@ void setup(){
   do {
     u8g.drawXBMP( 0, 20, logo_altezza_width, logo_altezza_height, logo_altezza_bits);
   } while(u8g.nextPage());
-  delay(700);
+  delay(900);
 }
 
-//---------------------------------------------
+//-----------------LOOP----------------------------
 
 void loop(){
   unsigned long currentMillis = millis();
-
-  //testLed(100);
   
   sw.update();
   if (sw.fell()) {
@@ -494,6 +485,17 @@ void loop(){
   if(page>5) page=0;
 
   //EEPROM_write(0, page);
+
+//--------------------Serial interface------------------------  
+
+//  if (Serial.available() > 0) { 
+//        char bufer[] = Serial.read();
+//
+//
+//    }
+
+
+//--------------------Data from sensors-------------------------
 
   if (currentMillis - ENG_SENS_prevMillis >= ENG_SENS_interval){
     ENG_SENS_prevMillis = currentMillis;
@@ -505,7 +507,10 @@ void loop(){
     int_temp = bmp.readTemperature();
     pressure = bmp.readPressure() / 133.3;  
     }
-  if (currentMillis - SD_prevMillis >= SD_interval){
+
+//--------------------Datalogger-------------------------
+
+  if (currentMillis - SD_prevMillis >= SD_interval[1]){
     SD_prevMillis = currentMillis;
     String dataString = String (getTime()+"  "+engine_temp+','+ext_temp+','+int_temp+','+pressure);
     File dataFile = SD.open("data.log", FILE_WRITE);
@@ -516,9 +521,12 @@ void loop(){
       //Serial.println(dataString);
     }    
     else {
+      sd_error=true;
       //Serial.println("error opening data.log");
     }
   }
+
+//---------------------Display out------------------------
 
   u8g.firstPage();
   do {
@@ -551,7 +559,7 @@ void loop(){
 
         case 5:
         case_upper(DISP_CONFIG[10]);
-        case_bottom(DISP_CONFIG[0]);
+        case_bottom(DISP_CONFIG[11]);
         break;
 
         default:
