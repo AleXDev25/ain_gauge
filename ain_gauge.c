@@ -1,6 +1,6 @@
 // All in one gauge for car and other vehicles
 //
-// Version 0.2
+// Version 0.3
 //
 // By Alexander B.
 // 2017
@@ -8,22 +8,21 @@
 
 #include <U8glib.h>
 #include <Bounce2.h>
-#include <EEPROM2.h>
+//#include <EEPROM2.h>
 #include <OneWire.h>
 #include <Adafruit_BMP085.h>
 #include <Wire.h>
-#include <SPI.h>
-#include <SD.h>
-
-U8GLIB_SSD1306_128X64 u8g(U8G_I2C_OPT_NONE|U8G_I2C_OPT_DEV_0);  // I2C / TWI 
+//#include <SPI.h>
+//#include <SD.h>
+//#include <OBD.h>
 
 //---------------------------------------------
 
 #define KEY 5
 #define PIN_DS 9
 //#define PIN_LED_BUSY 
-#define DS3231_I2C_ADDRESS 0x68
-#define SD_CS_PIN 10
+//#define DS3231_I2C_ADDRESS 0x68
+//#define SD_CS_PIN 10
 
 #define latchPin 8
 #define clockPin 7
@@ -64,19 +63,21 @@ static unsigned char logo_altezza_bits[] U8G_PROGMEM = {
   0xFF, 0xFD, 0x03, 0xFE, 0x3F, 0x80, 0xDF, 0xFF, 0x1F, 0xFC, 0x81, 0xFF, 
   0x9F, 0xFF, 0x7F, 0xFE, 0xFF, 0xFD, 0x01, 0xFC, };
 
-//----------------------Objects-----------------------
-
-Bounce sw = Bounce();
-OneWire  ds(PIN_DS);
+//-----------------------Create objects----------------------
+U8GLIB_SSD1306_128X64 u8g(U8G_I2C_OPT_NONE|U8G_I2C_OPT_DEV_0);  // I2C / TWI 
 Adafruit_BMP085 bmp;
+Bounce sw = Bounce();
+//COBD obd;
+OneWire  ds(PIN_DS);  
 
 //----------------------Var-----------------------
 
-bool bmp_error,sd_error,serial_enable;
-uint8_t page,serial_cmd = 0;
-float engine_temp,oil_temp,ext_temp,int_temp,pressure,egt = 0;
+bool bmp_error,/*sd_error,*/serial_enable;
+/*volatile */uint8_t page/*,serial_cmd = 0*/;
+float engine_temp,oil_temp,ext_temp,int_temp,atm_pressure,egt,oil_press = 0;
+int rpm_val,speed_val = 0;
 
-uint8_t DISP_CONFIG[12]={0,1,2,3,4,5,6,7,8,9,10,11}; // 0-Volt 1-water temp 2-oil temp 3-in.temp 4-ext.temp 5-atm press 6-oil press 7-SPEED 8-RPM 9-DATE 10-AFR 11-EGT
+uint8_t DISP_CONFIG[12]={0,1,2,3,4,5,6,7,8,9,10,11}; // 0-Volt 1-water temp 2-oil temp 3-oil press 4-AFR 5-EGT 6-RPM 7-SPEED 8-in.temp 9-ext.temp 10-atm press 11-DATE
 uint8_t LED_CONFIG[2]={0,1}; // 0-AFR 1-RPM
 
 //---------------------Multitask------------------------
@@ -85,8 +86,8 @@ unsigned long SENS_prevMillis = 0;
 const long SENS_interval = 3000;
 unsigned long ENG_SENS_prevMillis = 0; 
 const long ENG_SENS_interval = 200;
-unsigned long SD_prevMillis = 0; 
-const long SD_interval[3] = {1000,2000,5000};
+//unsigned long SD_prevMillis = 0; 
+//const long SD_interval[3] = {1000,2000,5000};
 
 //---------------------Sensor ardess------------------------
 
@@ -121,140 +122,198 @@ float readLambda(){
 
 //---------------------TIME------------------------
 
-byte bcdToDec(byte val){             // Convert binary coded decimal to normal decimal numbers
-  return( (val/16*10) + (val%16) );
-}
+// byte bcdToDec(byte val){             // Convert binary coded decimal to normal decimal numbers
+//   return( (val/16*10) + (val%16) );
+// }
 
-void readDS3231time(byte *second,byte *minute,byte *hour,byte *dayOfWeek,byte *dayOfMonth,byte *month,byte *year){
-  Wire.beginTransmission(DS3231_I2C_ADDRESS);
-  Wire.write(0);
-  Wire.endTransmission();
-  Wire.requestFrom(DS3231_I2C_ADDRESS, 7); 
-  *second = bcdToDec(Wire.read() & 0x7f);
-  *minute = bcdToDec(Wire.read());
-  *hour = bcdToDec(Wire.read() & 0x3f);
-  *dayOfWeek = bcdToDec(Wire.read());
-  *dayOfMonth = bcdToDec(Wire.read());
-  *month = bcdToDec(Wire.read());
-  *year = bcdToDec(Wire.read());
-}
+// void readDS3231time(byte *second,byte *minute,byte *hour,byte *dayOfWeek,byte *dayOfMonth,byte *month,byte *year){
+//   Wire.beginTransmission(DS3231_I2C_ADDRESS);
+//   Wire.write(0);
+//   Wire.endTransmission();
+//   Wire.requestFrom(DS3231_I2C_ADDRESS, 7); 
+//   *second = bcdToDec(Wire.read() & 0x7f);
+//   *minute = bcdToDec(Wire.read());
+//   *hour = bcdToDec(Wire.read() & 0x3f);
+//   *dayOfWeek = bcdToDec(Wire.read());
+//   *dayOfMonth = bcdToDec(Wire.read());
+//   *month = bcdToDec(Wire.read());
+//   *year = bcdToDec(Wire.read());
+// }
 
-String getTime(){
-  byte second, minute, hour, dayOfWeek, dayOfMonth, month, year;
-  readDS3231time(&second, &minute, &hour, &dayOfWeek, &dayOfMonth, &month, &year);
+// String getTime(int opt){
+//   byte second, minute, hour, dayOfWeek, dayOfMonth, month, year;
+//   readDS3231time(&second, &minute, &hour, &dayOfWeek, &dayOfMonth, &month, &year);
 
-  String sec = String (second);
-  String mi = String (minute);
-  String hr = String (hour);
-  String dd = String (dayOfMonth);
-  String mm = String (month);
-  String yy = String (year);
+//   String sec = String (second);
+//   String mi = String (minute);
+//   String hr = String (hour);
+//   String dd = String (dayOfMonth);
+//   String mm = String (month);
+//   String yy = String (year);
 
-  String dataStr = String (dd+'/'+mm+'/'+yy+' '+hr+':'+mi+':'+sec);
+//   String allStr = String (dd+'/'+mm+'/'+yy+' '+hr+':'+mi+':'+sec);
+//   String dateStr = String (dd+'/'+mm+'/'+yy);
+//   String timeStr = String (hr+':'+mi+':'+sec);
 
-  return dataStr;
-}
+//   switch(opt){
+//     case 0:   
+//     return allStr;
+//     break;
+
+//     case 1:   
+//     return dateStr;
+//     break;
+
+//     case 2:   
+//     return timeStr;
+//     break;
+//   }
+// }
 
 //-------------------DISPLAY FUNC.--------------------------
 
 void WATER_TEMP(uint8_t x, uint8_t y){
-  u8g.setFont(u8g_font_6x13);
+  u8g.setFont(u8g_font_7x14Br);
   u8g.setPrintPos(x,y);
-  u8g.println("WATER TEMP");
-  u8g.setPrintPos(x+64,y);
-  u8g.println(engine_temp,1);
+  u8g.print("WATER");
+  u8g.setPrintPos(x,y+12);
+  u8g.print("TEMP");
+  u8g.setFont(u8g_font_freedoomr25n);
+  if(engine_temp<10) u8g.setPrintPos(x+76,y+18);
+  else if(engine_temp<0) u8g.setPrintPos(x+58,y+18);
+  else u8g.setPrintPos(x+58,y+18);
+  u8g.print(engine_temp,1);
 }
 
 void OIL_TEMP(uint8_t x, uint8_t y){
-  u8g.setFont(u8g_font_6x13);
+  u8g.setFont(u8g_font_7x14Br);
   u8g.setPrintPos(x,y);
-  u8g.println("OIL TEMP");
-  u8g.setPrintPos(x+64,y);
-  u8g.println(oil_temp,1);
+  u8g.print("OIL");
+  u8g.setPrintPos(x,y+12);
+  u8g.print("TEMP");
+  u8g.setFont(u8g_font_freedoomr25n);
+  if(oil_temp<10) u8g.setPrintPos(x+76,y+18);
+  else if(oil_temp>99) u8g.setPrintPos(x+40,y+18);
+  else if(oil_temp<0) u8g.setPrintPos(x+58,y+18);
+  else u8g.setPrintPos(x+58,y+18);
+  u8g.print(oil_temp,1);
 }
 
 void IN_TEMP(uint8_t x, uint8_t y){
-  u8g.setFont(u8g_font_6x13);
+  u8g.setFont(u8g_font_7x14Br);
   u8g.setPrintPos(x,y);
-  u8g.println("IN.TEMP");
-  u8g.setPrintPos(x+64,y);
-  u8g.println(int_temp,1);
+  u8g.print("IN.");
+  u8g.setPrintPos(x,y+12);
+  u8g.print("TEMP");
+  u8g.setFont(u8g_font_freedoomr25n);
+  if(int_temp<10) u8g.setPrintPos(x+76,y+18);
+  else if(int_temp<0) u8g.setPrintPos(x+58,y+18);
+  else u8g.setPrintPos(x+58,y+18);
+  u8g.print(int_temp,1);
 }
 
 void EX_TEMP(uint8_t x, uint8_t y){
-  u8g.setFont(u8g_font_6x13);
+  u8g.setFont(u8g_font_7x14Br);
   u8g.setPrintPos(x,y);
-  u8g.println("EXT.TEMP");
-  u8g.setPrintPos(x+64,y);
-  u8g.println(ext_temp,1);  
+  u8g.print("EXT.");
+  u8g.setPrintPos(x,y+12);
+  u8g.print("TEMP");
+  u8g.setFont(u8g_font_freedoomr25n);
+  if(ext_temp<10) u8g.setPrintPos(x+76,y+18);
+  else if(ext_temp<0) u8g.setPrintPos(x+58,y+18);
+  else u8g.setPrintPos(x+58,y+18);
+  u8g.print(ext_temp,1); 
 }
 
 void ATM_PRESSURE(uint8_t x, uint8_t y){
-  u8g.setFont(u8g_font_6x13);
+  u8g.setFont(u8g_font_7x14Br);
   u8g.setPrintPos(x,y);
-  u8g.println("ATM.PRESS");
-  u8g.setPrintPos(x+64,y);
-  u8g.println(pressure,1);
+  u8g.print("ATM.");
+  u8g.setPrintPos(x,y+12);
+  u8g.print("PRESS");
+  u8g.setFont(u8g_font_freedoomr25n);
+  u8g.setPrintPos(x+39,y+18);
+  u8g.print(atm_pressure,1);
 }
 
 void OIL_PRESSURE(uint8_t x, uint8_t y){
-  u8g.setFont(u8g_font_6x13);
+  u8g.setFont(u8g_font_7x14Br);
   u8g.setPrintPos(x,y);
-  u8g.println("OIL PRESS");
-  u8g.setPrintPos(x+64,y);
-  u8g.println(8.0,1);
+  u8g.print("OIL");
+  u8g.setPrintPos(x,y+12);
+  u8g.print("PRESS");
+  u8g.setFont(u8g_font_freedoomr25n);
+  if(oil_press<10) u8g.setPrintPos(x+76,y+18);
+  else u8g.setPrintPos(x+58,y+18);
+  u8g.print(oil_press,1);
 }
 
 void RPM(uint8_t x, uint8_t y){
-  u8g.setFont(u8g_font_6x13);
+  u8g.setFont(u8g_font_7x14Br);
   u8g.setPrintPos(x,y);
-  u8g.println("RPM");
-  u8g.setPrintPos(x+64,y);
-  u8g.println(658);
+  u8g.print("RPM");
+  u8g.setFont(u8g_font_freedoomr25n);
+  if(rpm_val<100) u8g.setPrintPos(x+86,y+18);
+  if(rpm_val>=100) u8g.setPrintPos(x+68,y+18);
+  if(rpm_val>=1000)u8g.setPrintPos(x+50,y+18);
+  u8g.print(rpm_val);
 }
 
 void SPD(uint8_t x, uint8_t y){
-  u8g.setFont(u8g_font_6x13);
+  u8g.setFont(u8g_font_7x14Br);
   u8g.setPrintPos(x,y);
-  u8g.println("SPEED");
-  u8g.setPrintPos(x+64,y);
-  u8g.println(37);
+  u8g.print("SPEED");
+  u8g.setFont(u8g_font_freedoomr25n);
+  if(speed_val<10) u8g.setPrintPos(x+104,y+18);
+  if(speed_val>=10) u8g.setPrintPos(x+86,y+18);
+  if(speed_val>=100)u8g.setPrintPos(x+68,y+18);
+  u8g.print(speed_val);
 }
 
 void rtc_date(uint8_t x, uint8_t y){
-  u8g.setFont(u8g_font_6x13);
+  u8g.setFont(u8g_font_7x14Br);
   u8g.setPrintPos(x,y);
-  u8g.println("DATE");
-  u8g.setPrintPos(x+25,y);
-  u8g.println(getTime());
+  u8g.print("DATE");
+  u8g.setPrintPos(x+40,y);
+  // u8g.print(getTime(1));
+  // u8g.setPrintPos(x+40,y+14);
+  // u8g.print(getTime(2));
+  u8g.print("04.05.2017");
+  u8g.setPrintPos(x+40,y+14);
+  u8g.print("14:32");
 }
 
 void AFR(uint8_t x, uint8_t y){
-  u8g.setFont(u8g_font_6x13);
+  u8g.setFont(u8g_font_7x14Br);
   u8g.setPrintPos(x,y);
-  u8g.println("AFR");
-  u8g.setPrintPos(x+25,y);
-  u8g.println(readLambda(),1);
+  u8g.print("AFR");
+  u8g.setFont(u8g_font_freedoomr25n);
+  if(readLambda()<10) u8g.setPrintPos(x+76,y+18);
+  else u8g.setPrintPos(x+58,y+18);
+  u8g.print(readLambda(),1);
 }
 
 void VOLT(uint8_t x, uint8_t y){
-  u8g.setFont(u8g_font_6x13);
+  u8g.setFont(u8g_font_7x14Br);
   u8g.setPrintPos(x,y);
-  u8g.println("VOLT");
-  u8g.setPrintPos(x+25,y);
-  u8g.println(readVolt(),1);
+  u8g.print("VOLT");
+  u8g.setFont(u8g_font_freedoomr25n);
+  if(readVolt()<10) u8g.setPrintPos(x+76,y+18);
+  else u8g.setPrintPos(x+58,y+18);
+  u8g.print(readVolt(),1);
 }
 
 void EGT(uint8_t x, uint8_t y){
-  u8g.setFont(u8g_font_6x13);
+  u8g.setFont(u8g_font_7x14Br);
   u8g.setPrintPos(x,y);
-  u8g.println("EGT");
-  u8g.setPrintPos(x+25,y);
-  u8g.println(egt,1);
+  u8g.print("EGT");
+  u8g.setFont(u8g_font_freedoomr25n);
+  u8g.setPrintPos(x+58,y+18);
+  u8g.print(egt,1);
 }
 
 //-------------------DISPLAY CASE--------------------------
-
+// 0-Volt 1-water temp 2-oil temp 3-oil press 4-AFR 5-EGT 6-RPM 7-SPEED 8-in.temp 9-ext.temp 10-atm press 11-DATE
 void case_upper(uint8_t disp_conf){ // case for 128x0-32
   uint8_t x=2;
   uint8_t y=14;
@@ -270,35 +329,35 @@ void case_upper(uint8_t disp_conf){ // case for 128x0-32
     OIL_TEMP(x,y);
     break;
     case 3:
-    IN_TEMP(x,y);
+    OIL_PRESSURE(x,y);
     break;
     case 4:
-    EX_TEMP(x,y);
+    AFR(x,y);
     break;
     case 5:
-    ATM_PRESSURE(x,y);
+    EGT(x,y);
     break;
     case 6:
-    OIL_PRESSURE(x,y);
+    RPM(x,y);
     break;
     case 7:
     SPD(x,y);
     break;
     case 8:
-    RPM(x,y);
+    IN_TEMP(x,y);
     break;
     case 9:
-    rtc_date(x,y);
+    EX_TEMP(x,y);
     break;
     case 10:
-    AFR(x,y);
+    ATM_PRESSURE(x,y);
     break;
     case 11:
-    EGT(x,y);
+    rtc_date(x,y);
     break;
   }
 }
-
+// 0-Volt 1-water temp 2-oil temp 3-oil press 4-AFR 5-EGT 6-RPM 7-SPEED 8-in.temp 9-ext.temp 10-atm press 11-DATE
 void case_bottom(uint8_t disp_conf){ // case for 128x32-64
   uint8_t x=2;
   uint8_t y=46;
@@ -314,31 +373,31 @@ void case_bottom(uint8_t disp_conf){ // case for 128x32-64
     OIL_TEMP(x,y);
     break;
     case 3:
-    IN_TEMP(x,y);
+    OIL_PRESSURE(x,y);
     break;
     case 4:
-    EX_TEMP(x,y);
+    AFR(x,y);
     break;
     case 5:
-    ATM_PRESSURE(x,y);
+    EGT(x,y);
     break;
     case 6:
-    OIL_PRESSURE(x,y);
+    RPM(x,y);
     break;
     case 7:
     SPD(x,y);
     break;
     case 8:
-    RPM(x,y);
+    IN_TEMP(x,y);
     break;
     case 9:
-    rtc_date(x,y);
+    EX_TEMP(x,y);
     break;
     case 10:
-    AFR(x,y);
+    ATM_PRESSURE(x,y);
     break;
     case 11:
-    EGT(x,y);
+    rtc_date(x,y);
     break;
   }
 }
@@ -442,10 +501,14 @@ void dot_led(int in_data, int max_data){
   digitalWrite(latchPin, 1);
 }
 
+//void pagesw(){
+//  page+=1;
+//}
+
 //-------------------SETUP--------------------------
 
 void setup(){
-  Serial.begin(9600);
+//  Serial.begin(9600);
   u8g.setRot180();
   
   pinMode(latchPin, OUTPUT);
@@ -454,11 +517,14 @@ void setup(){
   pinMode(KEY, INPUT_PULLUP);
   sw.attach(KEY); 
   sw.interval(5);
+  //obd.begin();
+  //attachInterrupt(0, pagesw, FALLING);
+
 
   //EEPROM_read(0, page); 
 
   if (!bmp.begin()) bmp_error=true;
-  if (!SD.begin(SD_CS_PIN)) sd_error=true;
+//  if (!SD.begin(SD_CS_PIN)) sd_error=true;
   
   delay(100);
   blinkAll(1,300);
@@ -471,6 +537,10 @@ void setup(){
     u8g.drawXBMP( 0, 20, logo_altezza_width, logo_altezza_height, logo_altezza_bits);
   } while(u8g.nextPage());
   delay(900);
+
+  // do {
+  //   blinkAll(3,100);
+  // } while (!obd.init());
 }
 
 //-----------------LOOP----------------------------
@@ -478,10 +548,10 @@ void setup(){
 void loop(){
   unsigned long currentMillis = millis();
   
-  sw.update();
-  if (sw.fell()) {
-    page+=1;
-  }
+   sw.update();
+   if (sw.fell()) {
+     page+=1;
+   }
   if(page>5) page=0;
 
   //EEPROM_write(0, page);
@@ -499,42 +569,52 @@ void loop(){
 
   if (currentMillis - ENG_SENS_prevMillis >= ENG_SENS_interval){
     ENG_SENS_prevMillis = currentMillis;
-    engine_temp = GetTemp(engine);    
+    engine_temp = GetTemp(engine);
+
+    rpm_val = 4500;
+    speed_val = 105;
+
+    //obd.readPID(PID_RPM, rpm_val);
+    //obd.readPID(PID_SPEED, speed_val);
     }
   if (currentMillis - SENS_prevMillis >= SENS_interval){
     SENS_prevMillis = currentMillis;
     ext_temp = GetTemp(external); 
     int_temp = bmp.readTemperature();
-    pressure = bmp.readPressure() / 133.3;  
+    atm_pressure = bmp.readPressure() / 133.3;  
     }
 
 //--------------------Datalogger-------------------------
 
-  if (currentMillis - SD_prevMillis >= SD_interval[1]){
-    SD_prevMillis = currentMillis;
-    String dataString = String (getTime()+"  "+engine_temp+','+ext_temp+','+int_temp+','+pressure);
-    File dataFile = SD.open("data.log", FILE_WRITE);
-    if (dataFile) {      
-      dataFile.println(dataString);
-      dataFile.close();
-      
-      //Serial.println(dataString);
-    }    
-    else {
-      sd_error=true;
-      //Serial.println("error opening data.log");
-    }
-  }
+//  if (currentMillis - SD_prevMillis >= SD_interval[1]){
+//    SD_prevMillis = currentMillis;
+//    String dataString = String (getTime(0)+"  "+engine_temp+','+ext_temp+','+int_temp+','+pressure);
+//    File dataFile = SD.open("data.log", FILE_WRITE);
+//    if (dataFile) {      
+//      dataFile.println(dataString);
+//      dataFile.close();
+//      
+//      //Serial.println(dataString);
+//    }    
+//    else {
+//      sd_error=true;
+//      //Serial.println("error opening data.log");
+//    }
+//  }
+//---------------------Led out------------------------
 
+  //bar_led(rpm_val, 9000);
 //---------------------Display out------------------------
 
   u8g.firstPage();
   do {
+    u8g.drawHLine(0,32,129);
+    
     switch(page){
-
+    // 0-Volt 1-water temp 2-oil temp 3-oil press 4-AFR 5-EGT 6-RPM 7-SPEED 8-in.temp 9-ext.temp 10-atm press 11-DATE
         case 0:
-        case_upper(DISP_CONFIG[0]);
-        case_bottom(DISP_CONFIG[1]);
+        case_upper(DISP_CONFIG[4]);
+        case_bottom(DISP_CONFIG[0]);
         break;
 
         case 1:
@@ -543,30 +623,24 @@ void loop(){
         break;
 
         case 2:
-        case_upper(DISP_CONFIG[4]);
-        case_bottom(DISP_CONFIG[5]);
-        break;
-
-        case 3:
         case_upper(DISP_CONFIG[6]);
         case_bottom(DISP_CONFIG[7]);
         break;
 
-        case 4:
+        case 3:
         case_upper(DISP_CONFIG[8]);
         case_bottom(DISP_CONFIG[9]);
         break;
 
-        case 5:
+        case 4:
         case_upper(DISP_CONFIG[10]);
         case_bottom(DISP_CONFIG[11]);
         break;
 
-        default:
-        case_upper(DISP_CONFIG[0]);
-        case_bottom(DISP_CONFIG[1]);
+        case 5:
+        case_upper(DISP_CONFIG[1]);
+        case_bottom(DISP_CONFIG[0]);
         break;
      }
   } while(u8g.nextPage());     
 }
-
