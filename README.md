@@ -1,7 +1,7 @@
 # ain_gauge
 All in one gauge for car
 
-Version 0.2
+Version 0.3
 
 Feautures:
 - Based on atmega328p
