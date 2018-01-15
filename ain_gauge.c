@@ -572,7 +572,7 @@ void loop(){
     engine_temp = GetTemp(engine);
 
     rpm_val = 4500;
-    speed_val = 105;
+    speed_val = 37;
 
     //obd.readPID(PID_RPM, rpm_val);
     //obd.readPID(PID_SPEED, speed_val);
